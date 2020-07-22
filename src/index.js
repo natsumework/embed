@@ -38,283 +38,304 @@ import {debounce} from 'debounce';
  * @property {Object} patterns - static property with patterns for paste handling configuration
  */
 export default class Embed {
-  /**
-   * @param {{data: EmbedData, config: EmbedConfig, api: object}}
-   *   data — previously saved data
-   *   config - user config for Tool
-   *   api - Editor.js API
-   */
-  constructor({data, api}) {
-    this.api = api;
-    this._data = {};
-    this.element = null;
+    /**
+     * @param {{data: EmbedData, config: EmbedConfig, api: object}}
+     *   data — previously saved data
+     *   config - user config for Tool
+     *   api - Editor.js API
+     */
+    constructor({data, api}) {
+        this.api = api;
+        this._data = {};
+        this.element = null;
 
-    this.data = data;
-  }
-
-  /**
-   * @param {EmbedData} data
-   * @param {RegExp} [data.regex] - pattern of source URLs
-   * @param {string} [data.embedUrl] - URL scheme to embedded page. Use '<%= remote_id %>' to define a place to insert resource id
-   * @param {string} [data.html] - iframe which contains embedded content
-   * @param {number} [data.height] - iframe height
-   * @param {number} [data.width] - iframe width
-   * @param {string} [data.caption] - caption
-   */
-  set data(data) {
-    if (!(data instanceof Object)) {
-      throw Error('Embed Tool data should be object');
+        this.data = data;
     }
 
-    const {service, source, embed, width, height, caption = ''} = data;
+    /**
+     * @param {EmbedData} data
+     * @param {RegExp} [data.regex] - pattern of source URLs
+     * @param {string} [data.embedUrl] - URL scheme to embedded page. Use '<%= remote_id %>' to define a place to insert resource id
+     * @param {string} [data.html] - iframe which contains embedded content
+     * @param {number} [data.height] - iframe height
+     * @param {number} [data.width] - iframe width
+     * @param {string} [data.caption] - caption
+     */
+    set data(data) {
+        if (!(data instanceof Object)) {
+            throw Error('Embed Tool data should be object');
+        }
 
-    this._data = {
-      service: service || this.data.service,
-      source: source || this.data.source,
-      embed: embed || this.data.embed,
-      width: width || this.data.width,
-      height: height || this.data.height,
-      caption: caption || this.data.caption || '',
-    };
+        const {service, source, embed, width, height, caption = ''} = data;
 
-    const oldView = this.element;
+        this._data = {
+            service: service || this.data.service,
+            source: source || this.data.source,
+            embed: embed || this.data.embed,
+            width: width || this.data.width,
+            height: height || this.data.height,
+            caption: caption || this.data.caption || ''
+        };
 
-    if (oldView) {
-      oldView.parentNode.replaceChild(this.render(), oldView);
-    }
-  }
+        const oldView = this.element;
 
-  /**
-   * @return {EmbedData}
-   */
-  get data() {
-    if (this.element) {
-      const caption = this.element.querySelector(`.${this.api.styles.input}`);
-
-      this._data.caption = caption ? caption.innerHTML : '';
-    }
-
-    return this._data;
-  }
-
-  /**
-   * Get plugin styles
-   * @return {Object}
-   */
-  get CSS() {
-    return {
-      baseClass: this.api.styles.block,
-      input: this.api.styles.input,
-      container: 'embed-tool',
-      containerLoading: 'embed-tool--loading',
-      preloader: 'embed-tool__preloader',
-      caption: 'embed-tool__caption',
-      url: 'embed-tool__url',
-      content: 'embed-tool__content'
-    };
-  }
-
-  /**
-   * Render Embed tool content
-   *
-   * @return {HTMLElement}
-   */
-  render() {
-    if (!this.data.service) {
-      const container = document.createElement('div');
-
-      this.element = container;
-
-      return container;
+        if (oldView) {
+            oldView.parentNode.replaceChild(this.render(), oldView);
+        }
     }
 
-    const {html} = Embed.services[this.data.service];
-    const container = document.createElement('div');
-    const caption = document.createElement('div');
-    const template = document.createElement('template');
-    const preloader = this.createPreloader();
+    /**
+     * @return {EmbedData}
+     */
+    get data() {
+        if (this.element) {
+            const caption = this.element.querySelector(`.${this.api.styles.input}`);
 
-    container.classList.add(this.CSS.baseClass, this.CSS.container, this.CSS.containerLoading);
-    caption.classList.add(this.CSS.input, this.CSS.caption);
+            this._data.caption = caption ? caption.innerHTML : '';
+        }
 
-    container.appendChild(preloader);
-
-    caption.contentEditable = true;
-    caption.dataset.placeholder = 'Enter a caption';
-    caption.innerHTML = this.data.caption || '';
-
-    template.innerHTML = html;
-    template.content.firstChild.setAttribute('src', this.data.embed);
-    template.content.firstChild.classList.add(this.CSS.content);
-
-    const embedIsReady = this.embedIsReady(container);
-
-    container.appendChild(template.content.firstChild);
-    container.appendChild(caption);
-
-    embedIsReady
-      .then(() => {
-        container.classList.remove(this.CSS.containerLoading);
-      });
-
-    this.element = container;
-
-    return container;
-  }
-
-  /**
-   * Creates preloader to append to container while data is loading
-   * @return {HTMLElement} preloader
-   */
-  createPreloader() {
-    const preloader = document.createElement('preloader');
-    const url = document.createElement('div');
-
-    url.textContent = this.data.source;
-
-    preloader.classList.add(this.CSS.preloader);
-    url.classList.add(this.CSS.url);
-
-    preloader.appendChild(url);
-
-    return preloader;
-  }
-
-  /**
-   * Save current content and return EmbedData object
-   *
-   * @return {EmbedData}
-   */
-  save() {
-    return this.data;
-  }
-
-  /**
-   * Handle pasted url and return Service object
-   *
-   * @param {PasteEvent} event- event with pasted data
-   * @return {Service}
-   */
-  onPaste(event) {
-    const {key: service, data: url} = event.detail;
-
-    const {regex, embedUrl, width, height, id = (ids) => ids.shift()} = Embed.services[service];
-    const result = regex.exec(url).slice(1);
-    const embed = embedUrl.replace(/<\%\= remote\_id \%\>/g, id(result));
-
-    this.data = {
-      service,
-      source: url,
-      embed,
-      width,
-      height
-    };
-  }
-
-  /**
-   * Analyze provided config and make object with services to use
-   *
-   * @param {EmbedConfig} config
-   */
-  static prepare({config = {}}) {
-    let {services = {}} = config;
-
-    let entries = Object.entries(SERVICES);
-
-    const enabledServices = Object
-      .entries(services)
-      .filter(([key, value]) => {
-        return typeof value === 'boolean' && value === true;
-      })
-      .map(([ key ]) => key);
-
-    const userServices = Object
-      .entries(services)
-      .filter(([key, value]) => {
-        return typeof value === 'object';
-      })
-      .filter(([key, service]) => Embed.checkServiceConfig(service))
-      .map(([key, service]) => {
-        const {regex, embedUrl, html, height, width, id} = service;
-
-        return [key, {
-          regex,
-          embedUrl,
-          html,
-          height,
-          width,
-          id
-        } ];
-      });
-
-    if (enabledServices.length) {
-      entries = entries.filter(([ key ]) => enabledServices.includes(key));
+        return this._data;
     }
 
-    entries = entries.concat(userServices);
+    /**
+     * Get plugin styles
+     * @return {Object}
+     */
+    get CSS() {
+        return {
+            baseClass: this.api.styles.block,
+            input: this.api.styles.input,
+            container: 'embed-tool',
+            containerLoading: 'embed-tool--loading',
+            preloader: 'embed-tool__preloader',
+            caption: 'embed-tool__caption',
+            url: 'embed-tool__url',
+            content: 'embed-tool__content'
+        };
+    }
 
-    Embed.services = entries.reduce((result, [key, service]) => {
-      if (!(key in result)) {
-        result[key] = service;
-        return result;
-      }
+    /**
+     * Render Embed tool content
+     *
+     * @return {HTMLElement}
+     */
+    render() {
+        if (!this.data.service) {
+            const container = document.createElement('div');
 
-      result[key] = Object.assign({}, result[key], service);
-      return result;
-    }, {});
+            this.element = container;
 
-    Embed.patterns = entries
-      .reduce((result, [key, item]) => {
-        result[key] = item.regex;
+            return container;
+        }
 
-        return result;
-      }, {});
-  }
+        const {html, params} = Embed.services[this.data.service];
+        const container = document.createElement('div');
+        const caption = document.createElement('div');
+        const template = document.createElement('template');
+        const preloader = this.createPreloader();
+        let paramsString = '';
 
-  /**
-   * Check if Service config is valid
-   *
-   * @param {Service} config
-   * @return {boolean}
-   */
-  static checkServiceConfig(config) {
-    const {regex, embedUrl, html, height, width, id} = config;
+        container.classList.add(this.CSS.baseClass, this.CSS.container, this.CSS.containerLoading);
+        caption.classList.add(this.CSS.input, this.CSS.caption);
 
-    let isValid = regex && regex instanceof RegExp
-      && embedUrl && typeof embedUrl === 'string'
-      && html && typeof html === 'string';
+        container.appendChild(preloader);
 
-    isValid = isValid && (id !== undefined ? id instanceof Function : true);
-    isValid = isValid && (height !== undefined ? Number.isFinite(height) : true);
-    isValid = isValid && (width !== undefined ? Number.isFinite(width) : true);
+        caption.contentEditable = true;
+        caption.dataset.placeholder = 'Enter a caption';
+        caption.innerHTML = this.data.caption || '';
 
-    return isValid;
-  }
+        if (params instanceof Object) {
+            Object.keys(params).map(function (objectKey, index) {
+                const param = objectKey + '=' + params[objectKey];
 
-  /**
-   * Paste configuration to enable pasted URLs processing by Editor
-   */
-  static get pasteConfig() {
-    return {
-      patterns: Embed.patterns
-    };
-  }
+                if (paramsString !== '') {
+                    paramsString += '&';
+                }
 
-  /**
-   * Checks that mutations in DOM have finished after appending iframe content
-   * @param {HTMLElement} targetNode - HTML-element mutations of which to listen
-   * @return {Promise<any>} - result that all mutations have finished
-   */
-  embedIsReady(targetNode) {
-    const PRELOADER_DELAY = 450;
+                paramsString += param;
+            });
+            if (!this.data.embed.match(/\?./)) {
+                paramsString = '?' + paramsString;
+            } else {
+                paramsString = '&' + paramsString;
+            }
+        }
 
-    let observer = null;
+        template.innerHTML = html;
+        template.content.firstChild.setAttribute('src', this.data.embed + paramsString);
+        template.content.firstChild.classList.add(this.CSS.content);
 
-    return new Promise((resolve, reject) => {
-      observer = new MutationObserver(debounce(resolve, PRELOADER_DELAY));
-      observer.observe(targetNode, {childList: true, subtree: true});
-    }).then(() => {
-      observer.disconnect();
-    });
-  }
+        const embedIsReady = this.embedIsReady(container);
+
+        container.appendChild(template.content.firstChild);
+        container.appendChild(caption);
+
+        embedIsReady
+            .then(() => {
+                container.classList.remove(this.CSS.containerLoading);
+            });
+
+        this.element = container;
+
+        return container;
+    }
+
+    /**
+     * Creates preloader to append to container while data is loading
+     * @return {HTMLElement} preloader
+     */
+    createPreloader() {
+        const preloader = document.createElement('preloader');
+        const url = document.createElement('div');
+
+        url.textContent = this.data.source;
+
+        preloader.classList.add(this.CSS.preloader);
+        url.classList.add(this.CSS.url);
+
+        preloader.appendChild(url);
+
+        return preloader;
+    }
+
+    /**
+     * Save current content and return EmbedData object
+     *
+     * @return {EmbedData}
+     */
+    save() {
+        return this.data;
+    }
+
+    /**
+     * Handle pasted url and return Service object
+     *
+     * @param {PasteEvent} event- event with pasted data
+     * @return {Service}
+     */
+    onPaste(event) {
+        const {key: service, data: url} = event.detail;
+
+        const {regex, embedUrl, width, height, id = (ids) => ids.shift()} = Embed.services[service];
+        const result = regex.exec(url).slice(1);
+        const embed = embedUrl.replace(/<\%\= remote\_id \%\>/g, id(result));
+
+        this.data = {
+            service,
+            source: url,
+            embed,
+            width,
+            height
+        };
+    }
+
+    /**
+     * Analyze provided config and make object with services to use
+     *
+     * @param {EmbedConfig} config
+     */
+    static prepare({config = {}}) {
+        let {services = {}} = config;
+
+        let entries = Object.entries(SERVICES);
+
+        const enabledServices = Object
+            .entries(services)
+            .filter(([key, value]) => {
+                return typeof value === 'boolean' && value === true;
+            })
+            .map(([key]) => key);
+
+        const userServices = Object
+            .entries(services)
+            .filter(([key, value]) => {
+                return typeof value === 'object';
+            })
+            .filter(([key, service]) => Embed.checkServiceConfig(service))
+            .map(([key, service]) => {
+                const {regex, embedUrl, html, height, width, id, params} = service;
+
+                return [key, {
+                    regex: regex || SERVICES[key].regex,
+                    embedUrl: embedUrl || SERVICES[key].embedUrl,
+                    html: html || SERVICES[key].html,
+                    height: height || SERVICES[key].height,
+                    width: width || SERVICES[key].width,
+                    id: id || SERVICES[key].id,
+                    params
+                }];
+            });
+
+        if (enabledServices.length) {
+            entries = entries.filter(([key]) => enabledServices.includes(key));
+        }
+
+        entries = entries.concat(userServices);
+
+        Embed.services = entries.reduce((result, [key, service]) => {
+            if (!(key in result)) {
+                result[key] = service;
+                return result;
+            }
+
+            result[key] = Object.assign({}, result[key], service);
+            return result;
+        }, {});
+
+        Embed.patterns = entries
+            .reduce((result, [key, item]) => {
+                result[key] = item.regex;
+
+                return result;
+            }, {});
+    }
+
+    /**
+     * Check if Service config is valid
+     *
+     * @param {Service} config
+     * @return {boolean}
+     */
+    static checkServiceConfig(config) {
+        const {regex, embedUrl, html, height, width, id, params} = config;
+
+        let isValid = true;
+
+        isValid = isValid && (regex !== undefined ? regex instanceof RegExp : true);
+        isValid = isValid && (embedUrl !== undefined ? typeof embedUrl === 'string' : true);
+        isValid = isValid && (html !== undefined ? typeof html === 'string' : true);
+        isValid = isValid && (id !== undefined ? id instanceof Function : true);
+        isValid = isValid && (height !== undefined ? Number.isFinite(height) : true);
+        isValid = isValid && (width !== undefined ? Number.isFinite(width) : true);
+        isValid = isValid && (params !== undefined ? params instanceof Object : true);
+
+        return isValid;
+    }
+
+    /**
+     * Paste configuration to enable pasted URLs processing by Editor
+     */
+    static get pasteConfig() {
+        return {
+            patterns: Embed.patterns
+        };
+    }
+
+    /**
+     * Checks that mutations in DOM have finished after appending iframe content
+     * @param {HTMLElement} targetNode - HTML-element mutations of which to listen
+     * @return {Promise<any>} - result that all mutations have finished
+     */
+    embedIsReady(targetNode) {
+        const PRELOADER_DELAY = 450;
+
+        let observer = null;
+
+        return new Promise((resolve, reject) => {
+            observer = new MutationObserver(debounce(resolve, PRELOADER_DELAY));
+            observer.observe(targetNode, {childList: true, subtree: true});
+        }).then(() => {
+            observer.disconnect();
+        });
+    }
 }
